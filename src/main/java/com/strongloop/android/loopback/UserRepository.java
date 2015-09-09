@@ -153,7 +153,7 @@ public class UserRepository<U extends User> extends ModelRepository<U> {
     }
 
     /**
-     * Callback passed to loginUser to receive success and newly created
+     * Callback passed to loginUser(WithToken) to receive success and newly created
      * {@code U} user instance or thrown error.
      */
     public interface LoginCallback<U> {
@@ -190,6 +190,8 @@ public class UserRepository<U extends User> extends ModelRepository<U> {
 
         contract.addItem(new RestContractItem("/" + getNameForRestUrl() + "/login?include=user", "POST"),
                 className + ".login");
+        contract.addItem(new RestContractItem("/" + getNameForRestUrl() + "/loginWithToken?include=user", "POST"),
+                className + ".loginWithToken");
         contract.addItem(new RestContractItem("/" + getNameForRestUrl() + "/logout", "POST"),
                 className + ".logout");
         return contract;
@@ -225,10 +227,52 @@ public class UserRepository<U extends User> extends ModelRepository<U> {
             final LoginCallback<U> callback) {
 
         HashMap<String, Object> params = new HashMap<String, Object>();
-        params.put("email",  email);
+        params.put("email", email);
         params.put("password",  password);
 
         invokeStaticMethod("login", params,
+                new Adapter.JsonObjectCallback() {
+
+                    @Override
+                    public void onError(Throwable t) {
+                        callback.onError(t);
+                    }
+
+                    @Override
+                    public void onSuccess(JSONObject response) {
+                        AccessToken token = getAccessTokenRepository()
+                                .createObject(JsonUtil.fromJson(response));
+                        getRestAdapter().setAccessToken(token.getId().toString());
+
+                        JSONObject userJson = response.optJSONObject("user");
+                        U user = userJson != null
+                                ? createObject(JsonUtil.fromJson(userJson))
+                                : null;
+
+                        setCurrentUserId(token.getUserId());
+                        cachedCurrentUser = user;
+                        callback.onSuccess(token, user);
+                    }
+                });
+    }
+
+    /**
+     * Login a user given a OAuth 2.0 token.
+     * Creates a {@link AccessToken} and {@code U} user models if successful.
+     * @param access_token - access token
+     * @param refresh_token - refresh token (optional)
+     * @param callback - success/error callback
+     */
+    public void loginUserWithToken(String access_token, String refresh_token,
+                          final LoginCallback<U> callback) {
+
+        HashMap<String, Object> params = new HashMap<String, Object>();
+        params.put("access_token", access_token);
+        if (refresh_token != null && !refresh_token.isEmpty()) {
+            params.put("refresh_token", refresh_token);
+        }
+
+        invokeStaticMethod("loginWithToken", params,
                 new Adapter.JsonObjectCallback() {
 
                     @Override
